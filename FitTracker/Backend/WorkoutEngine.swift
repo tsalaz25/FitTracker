@@ -11,50 +11,88 @@ import Observation
 
 enum WorkoutEngine {
 
-    /// Builds a session from a plan day, pre-filling empty sets/intervals.
+    static let warmupBlockID = "warmup-block"
+
+    /// Builds a session from a plan day, copying each planned set with
+    /// its type and rep target. A non-empty warm-up note becomes a
+    /// single 1×1 block at the top.
     static func start(from day: PlanDay, context: ModelContext) -> WorkoutSession {
         let title = day.title.isEmpty ? "Workout" : day.title
+
         let session = WorkoutSession(title: title)
+        context.insert(session)
+
+        // Warm-up block first, at order -1 so it always sorts to the top.
+        let note = day.warmupNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty {
+            let block = PerformedExercise(exerciseID: warmupBlockID,
+                                          exerciseName: "Warm-Up",
+                                          order: -1,
+                                          mode: .strength)
+            context.insert(block)
+            block.isWarmupBlock = true
+            block.notes = note
+
+            let s = SetLog(index: 0, type: .warmup)
+            context.insert(s)
+            block.sets.append(s)
+
+            session.performed.append(block)
+        }
 
         for item in day.sorted {
             let pe = PerformedExercise(exerciseID: item.exerciseID,
                                        exerciseName: item.exerciseName,
                                        order: item.order,
                                        mode: item.mode)
+            context.insert(pe)
+            pe.notes = item.notes
+
             switch item.mode {
             case .cardio:
                 for i in 0..<max(1, item.targetIntervals) {
                     let s = SetLog(index: i)
+                    context.insert(s)
                     s.durationSeconds = item.targetIntervalSeconds
                     s.paceSecondsPerMile = item.targetPaceSecondsPerMile
                     pe.sets.append(s)
                 }
+
             case .strength:
-                for i in 0..<max(1, item.targetSets) {
-                    let s = SetLog(index: i)
-                    s.reps = item.targetReps
+                let planned = item.sortedSets
+                if planned.isEmpty {
+                    let s = SetLog(index: 0)
+                    context.insert(s)
                     pe.sets.append(s)
+                } else {
+                    for (i, ps) in planned.enumerated() {
+                        let s = SetLog(index: i, type: ps.type)
+                        context.insert(s)
+                        s.targetReps = ps.reps
+                        pe.sets.append(s)
+                    }
                 }
             }
+
             session.performed.append(pe)
         }
 
-        context.insert(session)
         return session
     }
 
-    /// Empty session for ad-hoc training.
     static func startBlank(context: ModelContext) -> WorkoutSession {
         let session = WorkoutSession(title: "Quick Workout")
         context.insert(session)
         return session
     }
 
-    /// Best previous performance for an exercise, excluding the current session.
-    /// Strength: heaviest completed set. Cardio: fastest completed pace.
+    /// Best previous performance for an exercise, excluding the current
+    /// session and ignoring warm-ups.
     static func lastPerformance(exerciseID: String,
                                 excluding current: WorkoutSession?,
                                 context: ModelContext) -> SetLog? {
+        guard exerciseID != warmupBlockID else { return nil }
+
         let descriptor = FetchDescriptor<WorkoutSession>(
             sortBy: [SortDescriptor(\.start, order: .reverse)]
         )
@@ -67,13 +105,12 @@ enum WorkoutEngine {
             let matches = session.performed
                 .filter { $0.exerciseID == exerciseID }
                 .flatMap(\.sets)
-                .filter(\.isComplete)
+                .filter { $0.isComplete && $0.type.countsAsWork }
 
             guard !matches.isEmpty else { continue }
 
             let best = matches.max { a, b in
                 if let aw = a.weight, let bw = b.weight { return aw < bw }
-                // Faster pace is better, so invert.
                 let ap = a.paceSecondsPerMile ?? .greatestFiniteMagnitude
                 let bp = b.paceSecondsPerMile ?? .greatestFiniteMagnitude
                 return ap > bp

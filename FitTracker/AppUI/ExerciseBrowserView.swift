@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-// MARK: - Reusable filter bar
+// MARK: - Filter bar
 
 struct FilterBar: View {
     @Binding var filters: ExerciseFilters
@@ -18,8 +18,7 @@ struct FilterBar: View {
             DisclosureGroup {
                 picker("Muscle", options: catalog.allMuscles, selection: $filters.muscle)
                 picker("Equipment", options: catalog.allEquipment, selection: $filters.equipment)
-                picker("Category", options: catalog.allCategories, selection: $filters.category)
-                picker("Level", options: catalog.allLevels, selection: $filters.level)
+                picker("Type", options: catalog.allKinds, selection: $filters.kind)
 
                 if filters.isActive {
                     Button("Clear all", role: .destructive) {
@@ -56,6 +55,41 @@ struct FilterBar: View {
     }
 }
 
+// MARK: - Quick muscle chips
+
+struct MuscleChips: View {
+    @Binding var selection: String?
+    private let catalog = ExerciseCatalog.shared
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("All", value: nil)
+                ForEach(catalog.allMuscles, id: \.self) { m in
+                    chip(m, value: m)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func chip(_ label: String, value: String?) -> some View {
+        let isOn = selection == value
+        return Button {
+            selection = value
+        } label: {
+            Text(label)
+                .font(.caption.weight(isOn ? .semibold : .regular))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isOn ? Color.accentColor : Color.secondary.opacity(0.15))
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - Row
 
 struct ExerciseRow: View {
@@ -65,7 +99,7 @@ struct ExerciseRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(exercise.name)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 if exercise.isCardio {
                     Image(systemName: "figure.run")
                         .font(.caption2)
@@ -84,10 +118,14 @@ struct ExerciseRow: View {
 struct ExerciseBrowserView: View {
     private let catalog = ExerciseCatalog.shared
     @State private var query = ""
-    @State private var filters = ExerciseFilters()
+    @State private var muscle: String?
+    @State private var equipment: String?
 
     private var results: [Exercise] {
-        catalog.search(query, filters: filters)
+        var f = ExerciseFilters()
+        f.muscle = muscle
+        f.equipment = equipment
+        return catalog.search(query, filters: f)
     }
 
     var body: some View {
@@ -99,21 +137,38 @@ struct ExerciseBrowserView: View {
                                            description: Text(err))
                 } else {
                     List {
-                        FilterBar(filters: $filters)
-
                         Section {
-                            if results.isEmpty {
-                                Text("No matches").foregroundStyle(.secondary)
-                            }
-                            ForEach(results) { ex in
-                                NavigationLink {
-                                    ExerciseDetailView(exercise: ex)
-                                } label: {
-                                    ExerciseRow(exercise: ex)
+                            MuscleChips(selection: $muscle)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 12,
+                                                          bottom: 4, trailing: 12))
+                            Picker("Equipment", selection: $equipment) {
+                                Text("All equipment").tag(String?.none)
+                                ForEach(catalog.allEquipment, id: \.self) { e in
+                                    Text(e).tag(String?.some(e))
                                 }
                             }
-                        } header: {
-                            Text("\(results.count) exercises")
+                        }
+
+                        ForEach(catalog.grouped(results), id: \.muscle) { group in
+                            Section {
+                                ForEach(group.items) { ex in
+                                    NavigationLink {
+                                        ExerciseDetailView(exercise: ex)
+                                    } label: {
+                                        ExerciseRow(exercise: ex)
+                                    }
+                                }
+                            } header: {
+                                HStack {
+                                    Text(group.muscle)
+                                    Spacer()
+                                    Text("\(group.items.count)")
+                                }
+                            }
+                        }
+
+                        if results.isEmpty {
+                            Text("No matches").foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -131,29 +186,16 @@ struct ExerciseDetailView: View {
 
     var body: some View {
         List {
-            Section("About") {
-                LabeledContent("Equipment", value: exercise.equipment?.capitalized ?? "—")
-                LabeledContent("Level", value: exercise.level?.capitalized ?? "—")
-                LabeledContent("Type", value: exercise.mechanic?.capitalized ?? "—")
-                LabeledContent("Category", value: exercise.category?.capitalized ?? "—")
-                LabeledContent("Primary", value: exercise.primaryMuscles
-                    .map(\.capitalized).joined(separator: ", "))
-                if !exercise.secondaryMuscles.isEmpty {
-                    LabeledContent("Secondary", value: exercise.secondaryMuscles
-                        .map(\.capitalized).joined(separator: ", "))
+            Section {
+                LabeledContent("Muscle", value: exercise.muscle)
+                LabeledContent("Equipment", value: exercise.equipment)
+                LabeledContent("Type", value: exercise.kind.capitalized)
+                if !exercise.secondary.isEmpty {
+                    LabeledContent("Also works",
+                                   value: exercise.secondary.joined(separator: ", "))
                 }
-            }
-
-            if !exercise.instructions.isEmpty {
-                Section("Instructions") {
-                    ForEach(Array(exercise.instructions.enumerated()), id: \.offset) { i, step in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("\(i + 1).")
-                                .foregroundStyle(.secondary)
-                            Text(step)
-                        }
-                        .font(.callout)
-                    }
+                if exercise.unilateral {
+                    LabeledContent("Logging", value: "One side at a time")
                 }
             }
         }

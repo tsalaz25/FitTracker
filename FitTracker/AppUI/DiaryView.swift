@@ -11,6 +11,7 @@ import SwiftData
 struct DiaryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \FoodEntry.date) private var allEntries: [FoodEntry]
+    @Query(sort: \MacroGoal.weekday) private var goals: [MacroGoal]
 
     @State private var addingTo: String?
     @State private var day = Date.now
@@ -22,6 +23,11 @@ struct DiaryView: View {
         allEntries.filter { Calendar.current.isDate($0.date, inSameDayAs: day) }
     }
 
+    /// Goal for the displayed day's weekday, not necessarily today's.
+    private var goal: MacroGoal? {
+        Goals.goal(for: day, in: goals)
+    }
+
     private func total(_ id: Int) -> Double {
         entries.reduce(0) { $0 + ($1.food?.amount(of: id, grams: $1.grams) ?? 0) }
     }
@@ -31,11 +37,22 @@ struct DiaryView: View {
             List {
                 dayNavigator
 
-                Section("Totals") {
-                    macroRow("Calories", Nutrient.calories, digits: 0)
-                    macroRow("Protein", Nutrient.protein, digits: 1)
-                    macroRow("Carbs", Nutrient.carbs, digits: 1)
-                    macroRow("Fat", Nutrient.fat, digits: 1)
+                if let goal, goal.isSet {
+                    goalSection(goal)
+                } else {
+                    Section("Totals") {
+                        macroRow("Calories", Nutrient.calories, digits: 0)
+                        macroRow("Protein", Nutrient.protein, digits: 1)
+                        macroRow("Carbs", Nutrient.carbs, digits: 1)
+                        macroRow("Fat", Nutrient.fat, digits: 1)
+                    }
+                    Section {
+                        NavigationLink {
+                            GoalsEditorView()
+                        } label: {
+                            Label("Set macro goals", systemImage: "target")
+                        }
+                    }
                 }
 
                 Section {
@@ -49,8 +66,74 @@ struct DiaryView: View {
                 }
             }
             .navigationTitle("Diary")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        MyFoodsView()
+                    } label: {
+                        Image(systemName: "list.bullet.rectangle")
+                    }
+                }
+            }
             .sheet(item: $addingTo) { meal in
                 FoodSearchView(meal: meal, date: day)
+            }
+            .task { Goals.seedIfNeeded(goals, context: context) }
+        }
+    }
+
+    // MARK: - Goal section
+
+    private func goalSection(_ goal: MacroGoal) -> some View {
+        let kcal = total(Nutrient.calories)
+        let remaining = goal.calories - kcal
+
+        return Section {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(Int(kcal))")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("of \(Int(goal.calories)) kcal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(remaining >= 0 ? "\(Int(remaining))" : "+\(Int(-remaining))")
+                        .font(.title2.monospacedDigit().bold())
+                        .foregroundStyle(remaining >= 0 ? Color.primary : Color.orange)
+                    Text(remaining >= 0 ? "remaining" : "over")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+
+            GoalProgressRow(label: "Carbs",
+                            consumed: total(Nutrient.carbs),
+                            target: goal.carbs,
+                            unit: "g",
+                            tint: .blue)
+            GoalProgressRow(label: "Protein",
+                            consumed: total(Nutrient.protein),
+                            target: goal.protein,
+                            unit: "g",
+                            tint: .green)
+            GoalProgressRow(label: "Fat",
+                            consumed: total(Nutrient.fat),
+                            target: goal.fat,
+                            unit: "g",
+                            tint: .orange)
+        } header: {
+            HStack {
+                Text("\(PlanWeekView.names[goal.weekday]) target")
+                Spacer()
+                NavigationLink {
+                    GoalDayEditor(goal: goal)
+                } label: {
+                    Text("Edit").font(.caption)
+                }
             }
         }
     }

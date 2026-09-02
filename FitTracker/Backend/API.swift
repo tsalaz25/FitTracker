@@ -6,5 +6,5 @@
 //
 
 enum API {
-    static let usdaAPIKey = "PASTE_YOUR_KEY_HERE"
+    static let usdaAPIKey = "PASTE_KEY_HERE"
 }

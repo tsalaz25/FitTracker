@@ -10,42 +10,36 @@ import Foundation
 struct Exercise: Identifiable, Hashable, Decodable {
     let id: String
     let name: String
-    let force: String?
-    let level: String?
-    let mechanic: String?
-    let equipment: String?
-    let primaryMuscles: [String]
-    let secondaryMuscles: [String]
-    let instructions: [String]
-    let category: String?
+    let muscle: String          // Chest, Back, Quads, Cardio, ...
+    let equipment: String       // Barbell, Dumbbell, Cable, Machine, ...
+    let kind: String            // compound, isolation, cardio
+    let secondary: [String]
+    let unilateral: Bool
 
     private enum Keys: String, CodingKey {
-        case id, name, force, level, mechanic, equipment
-        case primaryMuscles, secondaryMuscles, instructions, category
+        case id, name, muscle, equipment, kind, secondary, unilateral
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        id   = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        name = (try? c.decode(String.self, forKey: .name)) ?? "Unnamed"
-        force     = try? c.decodeIfPresent(String.self, forKey: .force)
-        level     = try? c.decodeIfPresent(String.self, forKey: .level)
-        mechanic  = try? c.decodeIfPresent(String.self, forKey: .mechanic)
-        equipment = try? c.decodeIfPresent(String.self, forKey: .equipment)
-        primaryMuscles   = (try? c.decode([String].self, forKey: .primaryMuscles)) ?? []
-        secondaryMuscles = (try? c.decode([String].self, forKey: .secondaryMuscles)) ?? []
-        instructions     = (try? c.decode([String].self, forKey: .instructions)) ?? []
-        category  = try? c.decodeIfPresent(String.self, forKey: .category)
+        id        = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        name      = (try? c.decode(String.self, forKey: .name)) ?? "Unnamed"
+        muscle    = (try? c.decode(String.self, forKey: .muscle)) ?? "Other"
+        equipment = (try? c.decode(String.self, forKey: .equipment)) ?? "Other"
+        kind      = (try? c.decode(String.self, forKey: .kind)) ?? "compound"
+        secondary = (try? c.decode([String].self, forKey: .secondary)) ?? []
+        unilateral = (try? c.decode(Bool.self, forKey: .unilateral)) ?? false
     }
 
+    var isCardio: Bool { kind == "cardio" }
+
+    /// "Barbell · Compound" — the line under the name in lists.
     var subtitle: String {
-        [equipment, primaryMuscles.first]
-            .compactMap { $0 }
-            .map { $0.capitalized }
-            .joined(separator: " · ")
+        var parts = [equipment]
+        if !isCardio { parts.append(kind.capitalized) }
+        if unilateral { parts.append("Per side") }
+        return parts.joined(separator: " · ")
     }
-
-    var isCardio: Bool { category == "cardio" }
 }
 
 // MARK: - Filters
@@ -53,23 +47,21 @@ struct Exercise: Identifiable, Hashable, Decodable {
 struct ExerciseFilters: Equatable {
     var muscle: String?
     var equipment: String?
-    var category: String?
-    var level: String?
+    var kind: String?
 
     var isActive: Bool {
-        muscle != nil || equipment != nil || category != nil || level != nil
+        muscle != nil || equipment != nil || kind != nil
     }
 
     mutating func clear() {
         muscle = nil
         equipment = nil
-        category = nil
-        level = nil
+        kind = nil
     }
 
     var summary: String {
-        [muscle, equipment, category, level]
-            .compactMap { $0?.capitalized }
+        [muscle, equipment, kind?.capitalized]
+            .compactMap { $0 }
             .joined(separator: " · ")
     }
 }
@@ -105,15 +97,14 @@ final class ExerciseCatalog {
         return all.filter { ex in
             let matchesText = q.isEmpty
                 || ex.name.lowercased().contains(q)
-                || ex.primaryMuscles.contains { $0.contains(q) }
-                || (ex.equipment?.contains(q) ?? false)
+                || ex.muscle.lowercased().contains(q)
+                || ex.equipment.lowercased().contains(q)
 
-            let mMuscle = filters.muscle == nil || ex.primaryMuscles.contains(filters.muscle!)
-            let mEquip  = filters.equipment == nil || ex.equipment == filters.equipment
-            let mCat    = filters.category == nil || ex.category == filters.category
-            let mLevel  = filters.level == nil || ex.level == filters.level
+            let mMuscle = filters.muscle == nil || ex.muscle == filters.muscle!
+            let mEquip  = filters.equipment == nil || ex.equipment == filters.equipment!
+            let mKind   = filters.kind == nil || ex.kind == filters.kind!
 
-            return matchesText && mMuscle && mEquip && mCat && mLevel
+            return matchesText && mMuscle && mEquip && mKind
         }
     }
 
@@ -121,12 +112,30 @@ final class ExerciseCatalog {
         all.first { $0.id == id }
     }
 
-    var allEquipment: [String]  { Set(all.compactMap(\.equipment)).sorted() }
-    var allMuscles: [String]    { Set(all.flatMap(\.primaryMuscles)).sorted() }
-    var allCategories: [String] { Set(all.compactMap(\.category)).sorted() }
-    var allLevels: [String] {
-        ["beginner", "intermediate", "expert"].filter { lvl in
-            all.contains { $0.level == lvl }
+    /// Muscle groups in training order rather than alphabetical.
+    var allMuscles: [String] {
+        let order = ["Chest", "Back", "Shoulders", "Biceps", "Triceps",
+                     "Forearms", "Traps", "Quads", "Hamstrings", "Glutes",
+                     "Calves", "Abs", "Cardio"]
+        let present = Set(all.map(\.muscle))
+        var result = order.filter { present.contains($0) }
+        result.append(contentsOf: present.subtracting(order).sorted())
+        return result
+    }
+
+    var allEquipment: [String] { Set(all.map(\.equipment)).sorted() }
+    var allKinds: [String] {
+        ["compound", "isolation", "cardio"].filter { k in
+            all.contains { $0.kind == k }
+        }
+    }
+
+    /// Grouped for the browser's section list.
+    func grouped(_ exercises: [Exercise]) -> [(muscle: String, items: [Exercise])] {
+        let dict = Dictionary(grouping: exercises, by: \.muscle)
+        return allMuscles.compactMap { m in
+            guard let items = dict[m], !items.isEmpty else { return nil }
+            return (muscle: m, items: items.sorted { $0.name < $1.name })
         }
     }
 }

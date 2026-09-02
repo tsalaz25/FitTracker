@@ -19,27 +19,27 @@ enum Nutrient {
     static let sugars   = 2000
 
     // Minerals
-    static let calcium   = 1087
-    static let iron      = 1089
-    static let magnesium = 1090
+    static let calcium    = 1087
+    static let iron       = 1089
+    static let magnesium  = 1090
     static let phosphorus = 1091
-    static let potassium = 1092
-    static let sodium    = 1093
-    static let zinc      = 1095
+    static let potassium  = 1092
+    static let sodium     = 1093
+    static let zinc       = 1095
 
     // Vitamins
-    static let vitaminA  = 1106
-    static let vitaminC  = 1162
-    static let vitaminD  = 1114
-    static let vitaminE  = 1109
-    static let vitaminK  = 1185
-    static let thiamin   = 1165
+    static let vitaminA   = 1106
+    static let vitaminC   = 1162
+    static let vitaminD   = 1114
+    static let vitaminE   = 1109
+    static let vitaminK   = 1185
+    static let thiamin    = 1165
     static let riboflavin = 1166
-    static let niacin    = 1167
-    static let b6        = 1175
-    static let folate    = 1177
-    static let b12       = 1178
-    static let choline   = 1180
+    static let niacin     = 1167
+    static let b6         = 1175
+    static let folate     = 1177
+    static let b12        = 1178
+    static let choline    = 1180
 }
 
 // MARK: - Errors
@@ -93,6 +93,7 @@ private struct SearchFood: Decodable {
     let brandName: String?
     let brandOwner: String?
     let dataType: String?
+    let foodNutrients: [FlexNutrient]?
 }
 
 private struct DetailFood: Decodable {
@@ -158,6 +159,7 @@ struct FoodSearchResult: Identifiable, Hashable {
     let name: String
     let brand: String?
     let dataType: String?
+    let caloriesPer100g: Double?
 }
 
 // MARK: - Service
@@ -170,8 +172,9 @@ struct USDAService {
         comps.queryItems = [
             .init(name: "api_key", value: API.usdaAPIKey),
             .init(name: "query", value: query),
-            .init(name: "pageSize", value: "30"),
-            .init(name: "dataType", value: "Foundation,SR Legacy,Branded")
+            .init(name: "pageSize", value: "50"),
+            .init(name: "dataType", value: "Foundation,SR Legacy,Branded"),
+            .init(name: "requireAllWords", value: "true")
         ]
 
         let (data, resp) = try await URLSession.shared.data(from: comps.url!)
@@ -185,12 +188,55 @@ struct USDAService {
             throw USDAError.decoding(describe(error))
         }
 
-        return (decoded.foods ?? []).map {
-            FoodSearchResult(id: $0.fdcId,
-                             name: ($0.description ?? "Unknown").capitalized,
-                             brand: $0.brandName ?? $0.brandOwner,
-                             dataType: $0.dataType)
+        let raw = (decoded.foods ?? []).map { f -> FoodSearchResult in
+            let kcal = f.foodNutrients?
+                .first { $0.id == Nutrient.calories }?
+                .value
+            return FoodSearchResult(id: f.fdcId,
+                                    name: (f.description ?? "Unknown").capitalized,
+                                    brand: f.brandName ?? f.brandOwner,
+                                    dataType: f.dataType,
+                                    caloriesPer100g: kcal)
         }
+
+        return rank(raw, query: query)
+    }
+
+    /// USDA's default ordering surfaces long branded descriptions ahead of
+    /// the plain ingredient you almost always want. This fixes that.
+    private static func rank(_ items: [FoodSearchResult],
+                             query: String) -> [FoodSearchResult] {
+        let q = query.lowercased().trimmingCharacters(in: .whitespaces)
+
+        func score(_ r: FoodSearchResult) -> Double {
+            var s = 0.0
+            let name = r.name.lowercased()
+
+            if name == q { s += 100 }
+            else if name.hasPrefix(q) { s += 50 }
+            else if name.contains(q) { s += 20 }
+
+            // Analytical data beats label data.
+            switch r.dataType {
+            case "Foundation": s += 30
+            case "SR Legacy":  s += 25
+            case "Branded":    s += 0
+            default:           s += 5
+            }
+
+            // Prefer concise names: "Chicken, breast" over a 90-char description.
+            s -= Double(r.name.count) * 0.15
+
+            // Entries with no calorie data are usually junk.
+            if (r.caloriesPer100g ?? 0) <= 0 { s -= 15 }
+
+            return s
+        }
+
+        return items
+            .sorted { score($0) > score($1) }
+            .prefix(30)
+            .map { $0 }
     }
 
     static func details(fdcID: Int) async throws -> Food {
@@ -253,7 +299,6 @@ struct USDAService {
         servings = servings.filter { seen.insert($0.label).inserted }
         if servings.count > 12 { servings = Array(servings.prefix(12)) }
 
-        // Raw grams always available.
         servings.append(ServingOption(label: "grams", grams: 1))
 
         return Food(name: (d.description ?? "Unknown").capitalized,

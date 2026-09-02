@@ -7,7 +7,7 @@
 
 import SwiftUI
 import SwiftData
- 
+
 @main
 struct FitTrackerApp: App {
     var body: some Scene {
@@ -18,8 +18,10 @@ struct FitTrackerApp: App {
             Food.self,
             FoodEntry.self,
             WeightEntry.self,
+            MacroGoal.self,
             PlanDay.self,
             PlanExercise.self,
+            PlanSet.self,
             WorkoutSession.self,
             PerformedExercise.self,
             SetLog.self

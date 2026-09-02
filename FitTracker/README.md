@@ -176,3 +176,168 @@ plan behaves correctly.
 SwiftData can't always migrate schema changes automatically. Delete
 FitTracker from your phone (long-press → Remove App → Delete App) and
 build fresh. You'll lose logged data.
+
+
+# UPDATE - Custom Foods Update and API Redesign
+ 
+## Files
+ 
+| File | Action |
+|---|---|
+| `Backend/Models.swift` | Edited |
+| `Backend/USDAService.swift` | Edited |
+| `AppUI/FoodSearchView.swift` | Edited |
+| `AppUI/CustomFoodEditor.swift` | **New file**  |
+
+ 
+
+## Changes
+ 
+### Custom foods
+ 
+`CustomFoodEditor` builds a food from a nutrition label. The important
+design decision: **the form asks for values per serving**, because that's
+what labels print. It converts to per-100g on save, since that's how the
+rest of the app stores nutrition. You never do the math.
+ 
+Enter the serving name ("1 bar") and its weight (55 g), then the label
+values. Vitamins and minerals are optional and collapsed by default.
+ 
+Custom foods are permanent, reusable, and editable. They behave exactly
+like USDA foods everywhere else in the app.
+ 
+### Recents and favorites
+ 
+The search sheet now opens showing **Favorites** and **Recent** before you
+type anything. Every logged food records `lastUsed` and `useCount`, so
+within a week or two your usual meals are one tap away with no search and
+no network call.
+ 
+Swipe right on any food to favorite it.
+ 
+### Better USDA search
+ 
+Three changes, all local:
+ 
+1. **Results are re-ranked.** Exact name matches first, then Foundation
+   and SR Legacy above Branded, and shorter names above long descriptive
+   ones. USDA's own ordering buries plain ingredients under branded
+   products.
+2. **Calories show inline** in the result list, so you can tell entries
+   apart without tapping each one.
+3. **`requireAllWords`** is on, which removes most irrelevant matches.
+Searching your saved foods happens simultaneously and appears above the
+database results.
+
+# UPDATE - Macro Goals
+
+## Files
+
+| File | Action |
+|---|---|
+| `Backend/MacroGoals.swift` | **New file** |
+| `AppUI/FitTrackerApp.swift` | Edited — adds `MacroGoal.self` to the container |
+| `AppUI/DiaryView.swift` | Edited |
+| `AppUI/ProgressTabView.swift` | Edited |
+
+
+---
+
+## How it works
+
+### Setting goals
+
+Progress tab → **Macro Goals** → tap any weekday. Enter carbs, protein,
+and fat in grams. Calories compute automatically:
+
+```
+cals = (carbs + protein) × 4 + fat × 9
+```
+
+Examples:
+- Monday at 330C / 200P / 55F gives 2,615 kcal. 
+- Tuesday at 270C / 200P / 65F gives 2,465 kcal.
+
+Each day also shows the macro split as a percentage bar
+
+**Copy to all days** overwrites all seven with the current day's numbers —
+handy for setting a baseline, then adjusting your training days up.
+
+### Other Datials
+
+The goal for the displayed day's weekday loads automatically, exactly like
+the workout plan does. The header shows calories consumed, calories
+remaining, and a progress bar per macro with grams left.
+
+Going over turns the number orange rather than red — over is information,
+not failure.
+
+Paging back to a previous day loads *that day's*
+weekday goal, not today's. Reviewing last Sunday compares against Sunday's
+target.
+
+### In Progress
+
+- **Macro Goals** row shows today's target at a glance
+- **Days on target** counts how many of the last 7 logged days landed
+  within 10% of goal
+- **Calories vs Goal** chart shows the last 14 logged days as bars, with a
+  tick mark for each day's goal. Bars turn orange when over.
+
+---
+
+## One thing to expect
+
+Your logged calories will not exactly equal
+`(carbs + protein) × 4 + fat × 9`.
+
+The 4/4/9 formula is a rounded convention. USDA reports measured calorie
+values that account for fiber being partly indigestible, alcohol, and
+food-specific factors. A day that hits macros perfectly might log 2,580
+kcal against a 2,615 goal.
+
+
+# UPDATE - Refined Exercise DB
+
+## Files
+
+| File | Action |
+|---|---|
+| `Backend/exercises.json` | Edited |
+| `Backend/Exercise.swift` | Edited |
+| `AppUI/ExerciseBrowserView.swift` | Edited |
+
+
+### Changes
+
+Existing plans store `exerciseID` strings from the old database
+(`"Barbell_Bench_Press"`). The new IDs are slugs
+(`"barbell-bench-press"`), so old plan entries won't match the catalog.
+
+**873 exercises → 163.** Curated for Bodybuilding and General
+Training. Everything you'd actually program is here.
+
+**Plain gym names.** "Incline Dumbbell Press", "Romanian Deadlift",
+"Lat Pulldown". No underscores, No descriptions-
+`level`, `force`, `mechanic`, and `instructions` are gone. 
+
+**New Schema.** Each exercise has:
+
+```json
+{
+  "id": "incline-dumbbell-press",
+  "name": "Incline Dumbbell Press",
+  "muscle": "Chest",
+  "equipment": "Dumbbell",
+  "kind": "compound",
+  "secondary": ["Shoulders", "Triceps"],
+  "unilateral": false
+}
+```
+
+**Grouped browsing.** Exercises are sectioned by Muscle in training
+order (Chest → Back → Shoulders → Arms → Legs → Abs → Cardio), not
+alphabetically across the whole list. 
+
+**`unilateral` flag** marks per-side exercises (Bulgarian split squats,
+single-arm rows). Not used for logic, may add ` per side ` logging
